@@ -28,96 +28,101 @@ typedef struct
 static VideoInfo **g_video_list = NULL;
 static size_t g_video_count = 0;
 static size_t g_video_capacity = 0;
-static char *g_course_name = NULL; // To store the name of the course/project
+static char *g_course_name = NULL;
 
 /**
- * @brief Prompts the user to enter a name for the course.
- * If the input is empty, the current directory name is used.
+ * @brief Checks if a file is a video by executing the 'file' command.
+ * This is a much more reliable method than manual signature checking.
+ *
+ * @param filepath The path to the file to check.
+ * @return int Returns 1 if it's a video, 0 otherwise.
  */
+int is_video_file(const char *filepath)
+{
+    char command[2048];
+    // Use "file -b --mime-type" to get only the MIME type string.
+    // The quotes around "%s" are crucial to handle filepaths with spaces.
+    snprintf(command, sizeof(command), "file -b --mime-type \"%s\"", filepath);
+
+    FILE *pipe = popen(command, "r");
+    if (!pipe)
+    {
+        fprintf(stderr, "Error: popen() failed while checking file type.\n");
+        return 0;
+    }
+
+    char buffer[128];
+    char *line = fgets(buffer, sizeof(buffer), pipe);
+    pclose(pipe);
+
+    if (line)
+    {
+        // Check if the output from the 'file' command starts with "video/"
+        if (strncmp(line, "video/", 6) == 0)
+        {
+            return 1; // It's a video file
+        }
+    }
+    return 0; // Not a video file
+}
+
+// --- Functions for course name, JSON, and list management (mostly unchanged) ---
+
 void prompt_for_course_name()
 {
     char input_buffer[256];
     printf("Enter the course name (leave blank to use current directory name): ");
     if (fgets(input_buffer, sizeof(input_buffer), stdin))
     {
-        // Remove trailing newline character
         input_buffer[strcspn(input_buffer, "\n")] = 0;
-
         if (strlen(input_buffer) == 0)
         {
-            // User entered nothing, use the directory name as default
             char cwd[1024];
             if (getcwd(cwd, sizeof(cwd)) != NULL)
             {
-                // basename might modify its argument, so we pass a copy
                 char *cwd_copy = strdup(cwd);
                 g_course_name = strdup(basename(cwd_copy));
                 free(cwd_copy);
             }
             else
             {
-                // Fallback in case getcwd fails
                 g_course_name = strdup("Untitled Course");
             }
             printf("Using default course name: '%s'\n", g_course_name);
         }
         else
         {
-            // Use the name provided by the user
             g_course_name = strdup(input_buffer);
         }
     }
 }
 
-/**
- * @brief Loads the course name from an existing data file.
- * @return A dynamically allocated string with the name, or NULL on failure.
- */
 char *load_course_name(const char *filename)
 {
     json_t *root;
     json_error_t error;
     root = json_load_file(filename, 0, &error);
-
     if (!root)
-    {
-        fprintf(stderr, "Warning: Could not parse JSON file '%s': %s\n", filename, error.text);
         return NULL;
-    }
 
     json_t *name_obj = json_object_get(root, "course_name");
     if (!json_is_string(name_obj))
     {
-        fprintf(stderr, "Warning: 'course_name' not found or not a string in JSON file.\n");
         json_decref(root);
         return NULL;
     }
-
     char *course_name = strdup(json_string_value(name_obj));
     json_decref(root);
     return course_name;
 }
 
-/**
- * @brief Saves all the collected video information into a JSON file.
- */
 void save_videos_to_json()
 {
-    // The root of our data is a JSON object
     json_t *root = json_object();
-    if (!root)
-    {
-        fprintf(stderr, "Error: Could not create JSON object.\n");
-        return;
-    }
-
-    // Add the course name to the root object
     if (g_course_name)
     {
         json_object_set_new(root, "course_name", json_string(g_course_name));
     }
-
-    // Create a JSON array for the videos
     json_t *videos_array = json_array();
     for (size_t i = 0; i < g_video_count; i++)
     {
@@ -127,24 +132,12 @@ void save_videos_to_json()
                                       "duration_sec", (json_int_t)vid->duration_sec,
                                       "watched_sec", (json_int_t)vid->watched_sec);
         if (video_obj)
-        {
             json_array_append_new(videos_array, video_obj);
-        }
     }
-
-    // Add the videos array to the root object under the key "videos"
     json_object_set_new(root, "videos", videos_array);
-
-    // Dump the complete JSON object to the file
-    if (json_dump_file(root, DATA_FILE, JSON_INDENT(2)) != 0)
-    {
-        fprintf(stderr, "Error: Failed to write to JSON file '%s'.\n", DATA_FILE);
-    }
-
+    json_dump_file(root, DATA_FILE, JSON_INDENT(2));
     json_decref(root);
 }
-
-// --- List Management, File Discovery, and FFmpeg functions (unchanged) ---
 
 void add_video_to_list(VideoInfo *video)
 {
@@ -217,17 +210,21 @@ void find_videos(const char *basePath)
             }
             else
             {
-                long long duration_sec = get_duration_in_seconds(path);
-                if (duration_sec >= 0)
+                // Use our new, more reliable function to check the file type
+                if (is_video_file(path))
                 {
-                    const char *display_path = (strncmp(path, "./", 2) == 0) ? path + 2 : path;
-                    VideoInfo *new_video = malloc(sizeof(VideoInfo));
-                    if (new_video)
+                    long long duration_sec = get_duration_in_seconds(path);
+                    if (duration_sec >= 0)
                     {
-                        new_video->path = strdup(display_path);
-                        new_video->duration_sec = duration_sec;
-                        new_video->watched_sec = 0; // For now, we reset this on every run
-                        add_video_to_list(new_video);
+                        const char *display_path = (strncmp(path, "./", 2) == 0) ? path + 2 : path;
+                        VideoInfo *new_video = malloc(sizeof(VideoInfo));
+                        if (new_video)
+                        {
+                            new_video->path = strdup(display_path);
+                            new_video->duration_sec = duration_sec;
+                            new_video->watched_sec = 0; // Reset on every run for now
+                            add_video_to_list(new_video);
+                        }
                     }
                 }
             }
@@ -242,22 +239,17 @@ int main(int argc, char *argv[])
     (void)argv;
     av_log_set_level(AV_LOG_QUIET);
 
-    // --- Initialization Step ---
-    // Check if data file exists.
     if (access(DATA_FILE, F_OK) != -1)
     {
-        // File exists, load the course name from it.
         printf("Data file '%s' found. Loading existing data...\n", DATA_FILE);
         g_course_name = load_course_name(DATA_FILE);
         if (!g_course_name)
         {
-            printf("Warning: Could not read course name. You may need to set it again.\n");
-            prompt_for_course_name(); // Fallback if loading fails
+            prompt_for_course_name();
         }
     }
     else
     {
-        // File does not exist, it's the first run in this directory.
         printf("No data file found. Starting a new course.\n");
         prompt_for_course_name();
     }
