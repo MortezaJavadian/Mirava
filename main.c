@@ -1,3 +1,4 @@
+#define _DEFAULT_SOURCE // Enable strdup function
 #include <stdio.h>
 #include <string.h>
 #include <dirent.h>
@@ -8,61 +9,113 @@
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
 
-// A global variable to store the total duration of all videos found, in seconds.
-static long long g_total_duration_seconds = 0;
+// Jansson header for JSON manipulation
+#include <jansson.h>
+
+#define DATA_FILE ".mirava_data.json"
+
+// A structure to hold all information about a single video file.
+typedef struct
+{
+    char *path;
+    long long duration_sec;
+    long long watched_sec; // For future use
+} VideoInfo;
+
+// A dynamic array to store pointers to all found videos.
+static VideoInfo **g_video_list = NULL;
+static size_t g_video_count = 0;
+static size_t g_video_capacity = 0;
 
 /**
- * @brief Gets the duration of a video file in seconds using FFmpeg.
- *
- * @param filepath The path to the video file.
- * @return long long The duration in seconds. Returns a negative value on failure.
+ * @brief Adds a new video to our global list.
+ * Manages resizing the list if it gets full.
  */
+void add_video_to_list(VideoInfo *video)
+{
+    if (g_video_count >= g_video_capacity)
+    {
+        // Double the capacity or start with 16 if it's empty
+        size_t new_capacity = g_video_capacity == 0 ? 16 : g_video_capacity * 2;
+        VideoInfo **new_list = realloc(g_video_list, new_capacity * sizeof(VideoInfo *));
+        if (!new_list)
+        {
+            fprintf(stderr, "Error: Failed to allocate memory for video list.\n");
+            return;
+        }
+        g_video_list = new_list;
+        g_video_capacity = new_capacity;
+    }
+    g_video_list[g_video_count++] = video;
+}
+
+/**
+ * @brief Frees all memory associated with the global video list.
+ */
+void cleanup_video_list()
+{
+    if (g_video_list)
+    {
+        for (size_t i = 0; i < g_video_count; i++)
+        {
+            free(g_video_list[i]->path);
+            free(g_video_list[i]);
+        }
+        free(g_video_list);
+    }
+}
+
+/**
+ * @brief Saves all the collected video information into a JSON file.
+ */
+void save_videos_to_json()
+{
+    // Create a new JSON array (the root of our file)
+    json_t *root = json_array();
+    if (!root)
+    {
+        fprintf(stderr, "Error: Could not create JSON array.\n");
+        return;
+    }
+
+    // For each video in our list, create a JSON object and add it to the array
+    for (size_t i = 0; i < g_video_count; i++)
+    {
+        VideoInfo *vid = g_video_list[i];
+        json_t *video_obj = json_pack("{s:s, s:I, s:I}",
+                                      "path", vid->path,
+                                      "duration_sec", (json_int_t)vid->duration_sec,
+                                      "watched_sec", (json_int_t)vid->watched_sec);
+
+        if (video_obj)
+        {
+            json_array_append_new(root, video_obj);
+        }
+    }
+
+    // Dump the JSON array to a file with pretty printing
+    if (json_dump_file(root, DATA_FILE, JSON_INDENT(2)) != 0)
+    {
+        fprintf(stderr, "Error: Failed to write to JSON file '%s'.\n", DATA_FILE);
+    }
+
+    // Decrease the reference count for the array, which will free it
+    json_decref(root);
+}
+
 long long get_duration_in_seconds(const char *filepath)
 {
     AVFormatContext *pFormatCtx = NULL;
-    long long duration_seconds = -1; // Default to error/unknown
-
-    // Open video file
     if (avformat_open_input(&pFormatCtx, filepath, NULL, NULL) != 0)
-    {
-        return -1; // Couldn't open file
-    }
-
-    // Retrieve stream information
+        return -1;
     if (avformat_find_stream_info(pFormatCtx, NULL) < 0)
     {
         avformat_close_input(&pFormatCtx);
-        return -2; // Couldn't find stream information
+        return -2;
     }
-
-    // Duration is in AV_TIME_BASE units (microseconds)
-    if (pFormatCtx->duration > 0)
-    {
-        duration_seconds = pFormatCtx->duration / AV_TIME_BASE;
-    }
-
-    // Close the video file and free the context
+    long long duration = pFormatCtx->duration;
     avformat_close_input(&pFormatCtx);
-
-    return duration_seconds;
-}
-
-int is_video_by_signature(const char *filepath)
-{
-    // This function remains unchanged
-    FILE *file = fopen(filepath, "rb");
-    if (!file)
-        return 0;
-    // ... (rest of the function is the same as before)
-    unsigned char buffer[32];
-    fread(buffer, 1, sizeof(buffer), file);
-    fclose(file);
-    // A simple check for brevity, the full list is in the previous version
-    if (memcmp(buffer + 4, "ftyp", 4) == 0)
-        return 1; // MP4
-    if (memcmp(buffer, "\x1A\x45\xDF\xA3", 4) == 0)
-        return 1; // MKV
-    return 0;
+    return (duration > 0) ? (duration / AV_TIME_BASE) : 0;
 }
 
 void find_videos(const char *basePath)
@@ -70,47 +123,41 @@ void find_videos(const char *basePath)
     char path[1024];
     struct dirent *dp;
     DIR *dir = opendir(basePath);
-
     if (!dir)
         return;
 
     while ((dp = readdir(dir)) != NULL)
     {
-        if (strcmp(dp->d_name, ".") != 0 && strcmp(dp->d_name, "..") != 0)
+        if (strcmp(dp->d_name, ".") == 0 || strcmp(dp->d_name, "..") == 0)
+            continue;
+
+        snprintf(path, sizeof(path), "%s/%s", basePath, dp->d_name);
+
+        // Skip our own data file
+        if (strcmp(path, "./" DATA_FILE) == 0)
+            continue;
+
+        struct stat statbuf;
+        if (stat(path, &statbuf) != -1)
         {
-            snprintf(path, sizeof(path), "%s/%s", basePath, dp->d_name);
-            struct stat statbuf;
-            if (stat(path, &statbuf) != -1)
+            if (S_ISDIR(statbuf.st_mode))
             {
-                if (S_ISDIR(statbuf.st_mode))
+                find_videos(path);
+            }
+            else
+            {
+                long long duration_sec = get_duration_in_seconds(path);
+                if (duration_sec >= 0)
                 {
-                    find_videos(path);
-                }
-                else
-                {
-                    if (is_video_by_signature(path))
+                    const char *display_path = (strncmp(path, "./", 2) == 0) ? path + 2 : path;
+
+                    VideoInfo *new_video = malloc(sizeof(VideoInfo));
+                    if (new_video)
                     {
-                        long long duration_sec = get_duration_in_seconds(path);
-                        char duration_str[12];
-
-                        if (duration_sec >= 0)
-                        {
-                            // Add to the global total
-                            g_total_duration_seconds += duration_sec;
-
-                            // Format for printing
-                            int hours = duration_sec / 3600;
-                            int minutes = (duration_sec % 3600) / 60;
-                            int seconds = duration_sec % 60;
-                            snprintf(duration_str, sizeof(duration_str), "[%02d:%02d:%02d]", hours, minutes, seconds);
-                        }
-                        else
-                        {
-                            snprintf(duration_str, sizeof(duration_str), "[Unknown]");
-                        }
-
-                        const char *display_path = (strncmp(path, "./", 2) == 0) ? path + 2 : path;
-                        printf("%-60s %s\n", display_path, duration_str);
+                        new_video->path = strdup(display_path);
+                        new_video->duration_sec = duration_sec;
+                        new_video->watched_sec = 0; // Default to 0
+                        add_video_to_list(new_video);
                     }
                 }
             }
@@ -124,23 +171,38 @@ int main(int argc, char *argv[])
     (void)argc;
     (void)argv;
 
-    // Suppress FFmpeg logs for cleaner output
     av_log_set_level(AV_LOG_QUIET);
 
-    printf("Searching for video files...\n\n");
+    printf("Scanning for videos...\n");
     find_videos(".");
-    printf("\nSearch complete.\n");
 
-    // Print the total duration
-    if (g_total_duration_seconds > 0)
+    long long total_duration_seconds = 0;
+    printf("\n--- Found Videos ---\n");
+    for (size_t i = 0; i < g_video_count; i++)
     {
-        long long total = g_total_duration_seconds;
-        int hours = total / 3600;
-        int minutes = (total % 3600) / 60;
-        int seconds = total % 60;
-        printf("------------------------------------------------------------------\n");
-        printf("Total Duration: %d hours, %d minutes, and %d seconds\n", hours, minutes, seconds);
+        VideoInfo *vid = g_video_list[i];
+        total_duration_seconds += vid->duration_sec;
+        int h = vid->duration_sec / 3600;
+        int m = (vid->duration_sec % 3600) / 60;
+        int s = vid->duration_sec % 60;
+        printf("%-60s [%02d:%02d:%02d]\n", vid->path, h, m, s);
     }
+
+    if (total_duration_seconds > 0)
+    {
+        int h = total_duration_seconds / 3600;
+        int m = (total_duration_seconds % 3600) / 60;
+        int s = total_duration_seconds % 60;
+        printf("------------------------------------------------------------------\n");
+        printf("Total Duration: %d hours, %d minutes, and %d seconds\n", h, m, s);
+    }
+
+    printf("\nSaving data to '%s'...\n", DATA_FILE);
+    save_videos_to_json();
+    printf("Data saved successfully.\n");
+
+    // Clean up all allocated memory before exiting
+    cleanup_video_list();
 
     return 0;
 }

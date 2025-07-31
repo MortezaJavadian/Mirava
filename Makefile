@@ -2,8 +2,10 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -g
 
-# Linker flags for FFmpeg libraries
-LDFLAGS = -lavformat -lavutil
+# Linker flags for external libraries
+# -lavformat -lavutil for FFmpeg
+# -ljansson for Jansson
+LDFLAGS = -lavformat -lavutil -ljansson
 
 # The target executable name
 TARGET = mirava
