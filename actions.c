@@ -14,6 +14,29 @@
 
 #define DATA_FILE ".mirava_data.json"
 
+// Helper function to get relative path from course root
+static const char* get_relative_path(const char *full_path, const char *course_root)
+{
+    if (!full_path || !course_root) {
+        return full_path;
+    }
+    
+    size_t root_len = strlen(course_root);
+    
+    // If full_path starts with course_root, return the relative part
+    if (strncmp(full_path, course_root, root_len) == 0) {
+        const char *relative = full_path + root_len;
+        // Skip leading slash if present
+        if (relative[0] == '/') {
+            relative++;
+        }
+        return relative;
+    }
+    
+    // If it doesn't match, return the original path
+    return full_path;
+}
+
 // --- Private function for scanning filesystem ---
 static void scan_and_sync_videos(const char *basePath)
 {
@@ -23,15 +46,20 @@ static void scan_and_sync_videos(const char *basePath)
     if (!dir)
         return;
 
+    const char *course_root = get_course_root_dir();
+
     while ((dp = readdir(dir)) != NULL)
     {
         if (strcmp(dp->d_name, ".") == 0 || strcmp(dp->d_name, "..") == 0)
             continue;
 
         snprintf(full_path, sizeof(full_path), "%s/%s", basePath, dp->d_name);
-        const char *display_path = (strncmp(full_path, "./", 2) == 0) ? full_path + 2 : full_path;
-
-        if (strcmp(display_path, DATA_FILE) == 0)
+        
+        // Get relative path from course root
+        const char *display_path = get_relative_path(full_path, course_root);
+        
+        // Skip the JSON data file
+        if (strcmp(dp->d_name, DATA_FILE) == 0)
             continue;
 
         struct stat statbuf;
@@ -76,7 +104,14 @@ void action_list_and_sync()
         prompt_for_course_name();
     }
 
-    scan_and_sync_videos(".");
+    // Get the course root directory and scan from there
+    const char *course_root = get_course_root_dir();
+    if (course_root) {
+        scan_and_sync_videos(course_root);
+    } else {
+        scan_and_sync_videos(".");
+    }
+    
     prune_missing_videos();
 
     display_video_list();
@@ -136,6 +171,7 @@ void action_update_progress(int video_number, const char *progress_str)
 void cleanup_globals()
 {
     cleanup_video_list();
+    cleanup_course_root();
     free(g_course_name);
     g_course_name = NULL;
 }
