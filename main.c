@@ -22,6 +22,7 @@ typedef struct
     char *path;
     long long duration_sec;
     long long watched_sec;
+    int found_on_disk; // A flag to sync with filesystem
 } VideoInfo;
 
 // --- Global Variables ---
@@ -30,48 +31,174 @@ static size_t g_video_count = 0;
 static size_t g_video_capacity = 0;
 static char *g_course_name = NULL;
 
+// Forward declarations
+void add_video_to_list(VideoInfo *video);
+long long get_duration_in_seconds(const char *filepath);
+
 /**
- * @brief Checks if a file is a video by executing the 'file' command.
- * This is a much more reliable method than manual signature checking.
- *
- * @param filepath The path to the file to check.
- * @return int Returns 1 if it's a video, 0 otherwise.
+ * @brief Loads all data (course name and video list) from the JSON file.
+ * Populates the global variables.
  */
+void load_data_from_json()
+{
+    json_t *root;
+    json_error_t error;
+
+    root = json_load_file(DATA_FILE, 0, &error);
+    if (!root)
+    {
+        // This is not an error if the file doesn't exist on first run.
+        return;
+    }
+
+    // Load course name
+    json_t *name_obj = json_object_get(root, "course_name");
+    if (json_is_string(name_obj))
+    {
+        g_course_name = strdup(json_string_value(name_obj));
+    }
+
+    // Load videos array
+    json_t *videos_array = json_object_get(root, "videos");
+    if (json_is_array(videos_array))
+    {
+        size_t index;
+        json_t *value;
+        json_array_foreach(videos_array, index, value)
+        {
+            const char *path = json_string_value(json_object_get(value, "path"));
+            json_int_t duration = json_integer_value(json_object_get(value, "duration_sec"));
+            json_int_t watched = json_integer_value(json_object_get(value, "watched_sec"));
+
+            if (path)
+            {
+                VideoInfo *vid = malloc(sizeof(VideoInfo));
+                vid->path = strdup(path);
+                vid->duration_sec = duration;
+                vid->watched_sec = watched;
+                vid->found_on_disk = 0; // Mark as not found yet
+                add_video_to_list(vid);
+            }
+        }
+    }
+    json_decref(root);
+}
+
+/**
+ * @brief Finds a video in the global list by its path.
+ * @return Pointer to the VideoInfo struct or NULL if not found.
+ */
+VideoInfo *find_video_by_path(const char *path)
+{
+    for (size_t i = 0; i < g_video_count; i++)
+    {
+        if (strcmp(g_video_list[i]->path, path) == 0)
+        {
+            return g_video_list[i];
+        }
+    }
+    return NULL;
+}
+
+/**
+ * @brief Scans the filesystem for videos and syncs with the loaded data.
+ */
+void scan_and_sync_videos(const char *basePath)
+{
+    char full_path[1024];
+    struct dirent *dp;
+    DIR *dir = opendir(basePath);
+    if (!dir)
+        return;
+
+    while ((dp = readdir(dir)) != NULL)
+    {
+        if (strcmp(dp->d_name, ".") == 0 || strcmp(dp->d_name, "..") == 0)
+            continue;
+
+        snprintf(full_path, sizeof(full_path), "%s/%s", basePath, dp->d_name);
+        const char *display_path = (strncmp(full_path, "./", 2) == 0) ? full_path + 2 : full_path;
+
+        if (strcmp(display_path, DATA_FILE) == 0)
+            continue;
+
+        struct stat statbuf;
+        if (stat(full_path, &statbuf) != -1)
+        {
+            if (S_ISDIR(statbuf.st_mode))
+            {
+                scan_and_sync_videos(full_path);
+            }
+            else if (is_video_file(full_path))
+            {
+                VideoInfo *existing_video = find_video_by_path(display_path);
+                if (existing_video)
+                {
+                    // Video exists, mark it as found and update duration
+                    existing_video->found_on_disk = 1;
+                    existing_video->duration_sec = get_duration_in_seconds(full_path);
+                }
+                else
+                {
+                    // It's a new video
+                    VideoInfo *new_video = malloc(sizeof(VideoInfo));
+                    new_video->path = strdup(display_path);
+                    new_video->duration_sec = get_duration_in_seconds(full_path);
+                    new_video->watched_sec = 0;
+                    new_video->found_on_disk = 1;
+                    add_video_to_list(new_video);
+                }
+            }
+        }
+    }
+    closedir(dir);
+}
+
+/**
+ * @brief Removes videos from the list that were not found on disk.
+ */
+void prune_missing_videos()
+{
+    VideoInfo **new_list = malloc(g_video_capacity * sizeof(VideoInfo *));
+    size_t new_count = 0;
+
+    for (size_t i = 0; i < g_video_count; i++)
+    {
+        if (g_video_list[i]->found_on_disk)
+        {
+            new_list[new_count++] = g_video_list[i];
+        }
+        else
+        {
+            // This video was in the JSON but not on disk, free it.
+            free(g_video_list[i]->path);
+            free(g_video_list[i]);
+        }
+    }
+
+    free(g_video_list);
+    g_video_list = new_list;
+    g_video_count = new_count;
+}
+
+// --- Utility functions (unchanged or minor changes) ---
 int is_video_file(const char *filepath)
 {
     char command[2048];
-    // Use "file -b --mime-type" to get only the MIME type string.
-    // The quotes around "%s" are crucial to handle filepaths with spaces.
     snprintf(command, sizeof(command), "file -b --mime-type \"%s\"", filepath);
-
     FILE *pipe = popen(command, "r");
     if (!pipe)
-    {
-        fprintf(stderr, "Error: popen() failed while checking file type.\n");
         return 0;
-    }
-
     char buffer[128];
     char *line = fgets(buffer, sizeof(buffer), pipe);
     pclose(pipe);
-
-    if (line)
-    {
-        // Check if the output from the 'file' command starts with "video/"
-        if (strncmp(line, "video/", 6) == 0)
-        {
-            return 1; // It's a video file
-        }
-    }
-    return 0; // Not a video file
+    return (line && strncmp(line, "video/", 6) == 0);
 }
-
-// --- Functions for course name, JSON, and list management (mostly unchanged) ---
 
 void prompt_for_course_name()
 {
     char input_buffer[256];
-    printf("Enter the course name (leave blank to use current directory name): ");
+    printf("Enter the course name (leave blank for current directory name): ");
     if (fgets(input_buffer, sizeof(input_buffer), stdin))
     {
         input_buffer[strcspn(input_buffer, "\n")] = 0;
@@ -86,9 +213,8 @@ void prompt_for_course_name()
             }
             else
             {
-                g_course_name = strdup("Untitled Course");
+                g_course_name = strdup("Untitled");
             }
-            printf("Using default course name: '%s'\n", g_course_name);
         }
         else
         {
@@ -97,32 +223,10 @@ void prompt_for_course_name()
     }
 }
 
-char *load_course_name(const char *filename)
-{
-    json_t *root;
-    json_error_t error;
-    root = json_load_file(filename, 0, &error);
-    if (!root)
-        return NULL;
-
-    json_t *name_obj = json_object_get(root, "course_name");
-    if (!json_is_string(name_obj))
-    {
-        json_decref(root);
-        return NULL;
-    }
-    char *course_name = strdup(json_string_value(name_obj));
-    json_decref(root);
-    return course_name;
-}
-
 void save_videos_to_json()
 {
     json_t *root = json_object();
-    if (g_course_name)
-    {
-        json_object_set_new(root, "course_name", json_string(g_course_name));
-    }
+    json_object_set_new(root, "course_name", json_string(g_course_name ? g_course_name : ""));
     json_t *videos_array = json_array();
     for (size_t i = 0; i < g_video_count; i++)
     {
@@ -143,15 +247,8 @@ void add_video_to_list(VideoInfo *video)
 {
     if (g_video_count >= g_video_capacity)
     {
-        size_t new_capacity = g_video_capacity == 0 ? 16 : g_video_capacity * 2;
-        VideoInfo **new_list = realloc(g_video_list, new_capacity * sizeof(VideoInfo *));
-        if (!new_list)
-        {
-            fprintf(stderr, "Error: Failed to allocate memory.\n");
-            return;
-        }
-        g_video_list = new_list;
-        g_video_capacity = new_capacity;
+        g_video_capacity = g_video_capacity == 0 ? 16 : g_video_capacity * 2;
+        g_video_list = realloc(g_video_list, g_video_capacity * sizeof(VideoInfo *));
     }
     g_video_list[g_video_count++] = video;
 }
@@ -185,88 +282,53 @@ long long get_duration_in_seconds(const char *filepath)
     return (duration > 0) ? (duration / AV_TIME_BASE) : 0;
 }
 
-void find_videos(const char *basePath)
-{
-    char path[1024];
-    struct dirent *dp;
-    DIR *dir = opendir(basePath);
-    if (!dir)
-        return;
-
-    while ((dp = readdir(dir)) != NULL)
-    {
-        if (strcmp(dp->d_name, ".") == 0 || strcmp(dp->d_name, "..") == 0)
-            continue;
-        snprintf(path, sizeof(path), "%s/%s", basePath, dp->d_name);
-        if (strcmp(path, "./" DATA_FILE) == 0)
-            continue;
-
-        struct stat statbuf;
-        if (stat(path, &statbuf) != -1)
-        {
-            if (S_ISDIR(statbuf.st_mode))
-            {
-                find_videos(path);
-            }
-            else
-            {
-                // Use our new, more reliable function to check the file type
-                if (is_video_file(path))
-                {
-                    long long duration_sec = get_duration_in_seconds(path);
-                    if (duration_sec >= 0)
-                    {
-                        const char *display_path = (strncmp(path, "./", 2) == 0) ? path + 2 : path;
-                        VideoInfo *new_video = malloc(sizeof(VideoInfo));
-                        if (new_video)
-                        {
-                            new_video->path = strdup(display_path);
-                            new_video->duration_sec = duration_sec;
-                            new_video->watched_sec = 0; // Reset on every run for now
-                            add_video_to_list(new_video);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    closedir(dir);
-}
-
 int main(int argc, char *argv[])
 {
     (void)argc;
     (void)argv;
     av_log_set_level(AV_LOG_QUIET);
 
-    if (access(DATA_FILE, F_OK) != -1)
+    // 1. Load existing data from .json file
+    load_data_from_json();
+
+    // 2. If no course name is loaded, prompt the user for one
+    if (!g_course_name)
     {
-        printf("Data file '%s' found. Loading existing data...\n", DATA_FILE);
-        g_course_name = load_course_name(DATA_FILE);
-        if (!g_course_name)
-        {
-            prompt_for_course_name();
-        }
-    }
-    else
-    {
-        printf("No data file found. Starting a new course.\n");
         prompt_for_course_name();
     }
 
-    printf("\nScanning for videos...\n");
-    find_videos(".");
+    // 3. Scan filesystem and sync: find new files, mark existing ones
+    scan_and_sync_videos(".");
 
+    // 4. Prune: remove videos from list that are no longer on disk
+    prune_missing_videos();
+
+    // 5. Display the final, synced list
+    printf("\n--- Course: %s ---\n", g_course_name);
     long long total_duration_seconds = 0;
-    printf("\n--- Course: %s ---\n", g_course_name ? g_course_name : "N/A");
     for (size_t i = 0; i < g_video_count; i++)
     {
         VideoInfo *vid = g_video_list[i];
         total_duration_seconds += vid->duration_sec;
+
+        char status_str[15] = "";
+        if (vid->duration_sec > 0)
+        {
+            if (vid->watched_sec >= vid->duration_sec)
+            {
+                snprintf(status_str, sizeof(status_str), "[✓]");
+            }
+            else if (vid->watched_sec > 0)
+            {
+                int percentage = (int)(100 * vid->watched_sec / vid->duration_sec);
+                snprintf(status_str, sizeof(status_str), "[%d%%]", percentage);
+            }
+        }
+
         int h = vid->duration_sec / 3600;
         int m = (vid->duration_sec % 3600) / 60;
         int s = vid->duration_sec % 60;
-        printf("%-60s [%02d:%02d:%02d]\n", vid->path, h, m, s);
+        printf("%-50s [%02d:%02d:%02d] %s\n", vid->path, h, m, s, status_str);
     }
 
     if (total_duration_seconds > 0)
@@ -274,13 +336,13 @@ int main(int argc, char *argv[])
         int h = total_duration_seconds / 3600;
         int m = (total_duration_seconds % 3600) / 60;
         int s = total_duration_seconds % 60;
-        printf("------------------------------------------------------------------\n");
+        printf("-----------------------------------------------------------------------------\n");
         printf("Total Duration: %d hours, %d minutes, and %d seconds\n", h, m, s);
     }
 
-    printf("\nSaving data to '%s'...\n", DATA_FILE);
+    // 6. Save the updated data back to the .json file
     save_videos_to_json();
-    printf("Data saved successfully.\n");
+    printf("\nData synced and saved successfully.\n");
 
     cleanup();
     return 0;
