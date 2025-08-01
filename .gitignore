@@ -1,30 +1,55 @@
+# Prerequisites
+*.d
 
-# Help tools that honor '.gitignore' (redundant for Git itself).
-/.git
-/CMakeUserPresets.json
-# Common build directories
-/build*/
-# CI jobs that run in symlinked trees produce these artifacts.
-/real_work/
-/work
-# MacOS Finder files.
-.DS_Store
-# Python compile output.
-*.pyc
-# See Utilities/Sphinx/tutorial_archive.cmake
-/Help/_generated
-# CLion work directory
-/.idea/
-# CLion build directories
-/cmake-build-*/
-# QtCreator files.
-/CMakeLists.txt.user*
-# Visual Studio Code
-/.vscode/
-/.cache/
-# Visual Studio work directory
-/.vs/
-# Visual Studio build directory
-/out/
-# clang-tidy output
-/clang-tidy-fixes.patch
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Linker output
+*.ilk
+*.map
+*.exp
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Kernel Module Compile Results
+*.mod*
+*.cmd
+.tmp_versions/
+modules.order
+Module.symvers
+Mkfile.old
+dkms.conf
+
+# debug information files
+*.dwo

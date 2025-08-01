@@ -1,24 +1,30 @@
 # Compiler and compiler flags
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -g
+# Add -I. to include the current directory for header files
+CFLAGS = -Wall -Wextra -std=c99 -g -I.
 
 # Linker flags for external libraries
-# -lavformat -lavutil for FFmpeg
-# -ljansson for Jansson
-LDFLAGS = -lavformat -lavutil -ljansson
+LDFLAGS = -lavformat -lavutil -ljansson -lm
 
 # The target executable name
 TARGET = mirava
 
-# Default rule
+# List of object files
+OBJS = main.o actions.o cli.o data_manager.o file_utils.o video_list.o
+
+# Default rule: build the target
 all: $(TARGET)
 
 # Rule to link the object files into the final executable
-$(TARGET): main.c
-	$(CC) $(CFLAGS) -o $(TARGET) main.c $(LDFLAGS)
+$(TARGET): $(OBJS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) $(LDFLAGS)
+
+# Rule to compile a .c file into a .o file
+%.o: %.c *.h
+	$(CC) $(CFLAGS) -c $< -o $@
 
 # Rule to clean up the build artifacts
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(OBJS)
 
 .PHONY: all clean
