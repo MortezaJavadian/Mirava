@@ -7,6 +7,14 @@
 *.obj
 *.elf
 
+# Build artifacts
+mirava
+.mirava_data.json
+
+# Debian package files
+debian-package/
+*.deb
+
 # Linker output
 *.ilk
 *.map

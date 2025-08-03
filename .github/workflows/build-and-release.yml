@@ -1,0 +1,418 @@
+name: Build and Release Mirava
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags like v1.0.0
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up cross-compilation for ARM64
+      if: matrix.arch == 'arm64'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        if [ "${{ matrix.arch }}" = "amd64" ]; then
+          sudo apt-get install -y libavformat-dev libavutil-dev libjansson-dev build-essential
+        else
+          sudo apt-get install -y libavformat-dev:arm64 libavutil-dev:arm64 libjansson-dev:arm64 build-essential
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+        fi
+
+    - name: Get version info
+      id: version
+      run: |
+        VERSION=$(cat VERSION | grep VERSION | cut -d'=' -f2)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "deb_name=mirava_${VERSION}_${{ matrix.arch }}.deb" >> $GITHUB_OUTPUT
+        echo "binary_name=mirava-linux-${{ matrix.arch }}" >> $GITHUB_OUTPUT
+
+    - name: Build Mirava
+      run: |
+        if [ "${{ matrix.arch }}" = "amd64" ]; then
+          make clean && make
+        else
+          CC=aarch64-linux-gnu-gcc make clean && make
+        fi
+        cp mirava ${{ steps.version.outputs.binary_name }}
+
+    - name: Test build (amd64 only)
+      if: matrix.arch == 'amd64'
+      run: |
+        ./mirava help
+
+    - name: Create .deb package structure
+      run: |
+        VERSION=${{ steps.version.outputs.version }}
+        mkdir -p debian-package/DEBIAN
+        mkdir -p debian-package/usr/local/bin
+        mkdir -p debian-package/usr/share/doc/mirava
+        mkdir -p debian-package/usr/share/man/man1
+        
+        # Copy binary
+        cp mirava debian-package/usr/local/bin/
+        
+        # Copy documentation
+        cp README.md debian-package/usr/share/doc/mirava/
+        cp VERSION debian-package/usr/share/doc/mirava/
+        cp CHANGELOG.md debian-package/usr/share/doc/mirava/
+        cp LICENSE debian-package/usr/share/doc/mirava/copyright
+        
+        # Create man page
+        cat > debian-package/usr/share/man/man1/mirava.1 << 'EOF'
+        .TH MIRAVA 1 "$(date)" "Mirava $VERSION" "User Commands"
+        .SH NAME
+        mirava \- Video Course Progress Tracker
+        .SH SYNOPSIS
+        .B mirava
+        .br
+        .B mirava set
+        .I video_number progress
+        .br
+        .B mirava mark
+        .I video_number [video_number...]
+        .br
+        .B mirava help
+        .SH DESCRIPTION
+        Mirava is a command-line tool that helps you watch video courses. It scans your directory to find videos and shows you how much of each video you've watched and how long you have until you finish the course.
+        .SH EXAMPLES
+        .TP
+        .B mirava
+        List all videos and sync progress
+        .TP
+        .B mirava set 3 50%
+        Set video 3 to 50% watched
+        .TP
+        .B mirava mark 1 3 5
+        Mark videos 1, 3, and 5 as complete
+        .SH AUTHORS
+        Morteza Javadian
+        EOF
+        gzip debian-package/usr/share/man/man1/mirava.1
+        
+        # Create control file
+        cat > debian-package/DEBIAN/control << EOF
+        Package: mirava
+        Version: $VERSION
+        Section: utils
+        Priority: optional
+        Architecture: ${{ matrix.arch }}
+        Depends: libavformat60, libavutil58, libjansson4
+        Maintainer: Morteza Javadian <morteza@example.com>
+        Description: Video Course Progress Tracker
+         Mirava is a command-line tool that helps you watch video courses.
+         It scans your directory to find videos and shows you how much of each
+         video you've watched and how long you have until you finish the course.
+         .
+         Features:
+          - Automatic video detection and course hierarchy support
+          - Progress tracking with percentage, time, and raw seconds
+          - Multiple video marking support
+          - Smart course detection from subdirectories
+          - JSON-based progress persistence
+          - Clean relative path display
+        EOF
+        
+        # Create postinst script
+        cat > debian-package/DEBIAN/postinst << EOF
+        #!/bin/bash
+        chmod +x /usr/local/bin/mirava
+        echo "Mirava $VERSION installed successfully!"
+        echo "Run 'mirava help' for usage information."
+        echo ""
+        echo "Quick start:"
+        echo "  cd /path/to/your/course"
+        echo "  mirava                    # List videos and sync progress"
+        echo "  mirava mark 1 3 5         # Mark videos as complete"
+        echo "  mirava set 2 50%          # Set progress to 50%"
+        EOF
+        chmod 755 debian-package/DEBIAN/postinst
+
+    - name: Build .deb package
+      run: |
+        dpkg-deb --build debian-package ${{ steps.version.outputs.deb_name }}
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-${{ matrix.arch }}-artifacts
+        path: |
+          ${{ steps.version.outputs.deb_name }}
+          ${{ steps.version.outputs.binary_name }}
+
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup MSYS2
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: MINGW64
+        install: mingw-w64-x86_64-gcc mingw-w64-x86_64-make mingw-w64-x86_64-ffmpeg mingw-w64-x86_64-jansson
+
+    - name: Get version info
+      shell: msys2 {0}
+      id: version
+      run: |
+        VERSION=$(cat VERSION | grep VERSION | cut -d'=' -f2)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "binary_name=mirava-windows-amd64.exe" >> $GITHUB_OUTPUT
+
+    - name: Build Mirava for Windows
+      shell: msys2 {0}
+      run: |
+        make clean
+        make LDFLAGS="-lavformat -lavutil -ljansson -lm -static"
+        cp mirava.exe ${{ steps.version.outputs.binary_name }}
+
+    - name: Test build
+      shell: msys2 {0}
+      run: |
+        ./${{ steps.version.outputs.binary_name }} help
+
+    - name: Upload Windows artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-amd64-artifacts
+        path: ${{ steps.version.outputs.binary_name }}
+
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [x86_64, arm64]
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        brew install ffmpeg jansson
+
+    - name: Get version info
+      id: version
+      run: |
+        VERSION=$(cat VERSION | grep VERSION | cut -d'=' -f2)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "binary_name=mirava-macos-${{ matrix.arch }}" >> $GITHUB_OUTPUT
+
+    - name: Build Mirava for macOS
+      run: |
+        if [ "${{ matrix.arch }}" = "x86_64" ]; then
+          make clean && make
+        else
+          make clean && make CC="clang -arch arm64"
+        fi
+        cp mirava ${{ steps.version.outputs.binary_name }}
+
+    - name: Test build (x86_64 only)
+      if: matrix.arch == 'x86_64'
+      run: |
+        ./${{ steps.version.outputs.binary_name }} help
+
+    - name: Upload macOS artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: macos-${{ matrix.arch }}-artifacts
+        path: ${{ steps.version.outputs.binary_name }}
+
+  create-release:
+    needs: [build-linux, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Get version info
+      id: version
+      run: |
+        VERSION=$(cat VERSION | grep VERSION | cut -d'=' -f2)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+
+    - name: Create checksums
+      run: |
+        find . -name "*.deb" -o -name "mirava-*" | xargs sha256sum > checksums.txt
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Mirava ${{ github.ref }}
+        draft: false
+        prerelease: false
+        body: |
+          ## Mirava Release ${{ github.ref }}
+          
+          ### Installation Instructions
+          
+          #### Ubuntu/Debian (.deb packages):
+          ```bash
+          # For AMD64:
+          wget https://github.com/MortezaJavadian/Mirava/releases/download/${{ github.ref }}/mirava_${{ steps.version.outputs.version }}_amd64.deb
+          sudo dpkg -i mirava_${{ steps.version.outputs.version }}_amd64.deb
+          sudo apt-get install -f
+          
+          # For ARM64:
+          wget https://github.com/MortezaJavadian/Mirava/releases/download/${{ github.ref }}/mirava_${{ steps.version.outputs.version }}_arm64.deb
+          sudo dpkg -i mirava_${{ steps.version.outputs.version }}_arm64.deb
+          sudo apt-get install -f
+          ```
+          
+          #### Other Linux distributions:
+          ```bash
+          # Download binary for your architecture
+          wget https://github.com/MortezaJavadian/Mirava/releases/download/${{ github.ref }}/mirava-linux-amd64
+          chmod +x mirava-linux-amd64
+          sudo mv mirava-linux-amd64 /usr/local/bin/mirava
+          ```
+          
+          #### Windows:
+          ```cmd
+          # Download and run
+          curl -L https://github.com/MortezaJavadian/Mirava/releases/download/${{ github.ref }}/mirava-windows-amd64.exe -o mirava.exe
+          ```
+          
+          #### macOS:
+          ```bash
+          # For Intel Macs:
+          wget https://github.com/MortezaJavadian/Mirava/releases/download/${{ github.ref }}/mirava-macos-x86_64
+          chmod +x mirava-macos-x86_64
+          sudo mv mirava-macos-x86_64 /usr/local/bin/mirava
+          
+          # For Apple Silicon Macs:
+          wget https://github.com/MortezaJavadian/Mirava/releases/download/${{ github.ref }}/mirava-macos-arm64
+          chmod +x mirava-macos-arm64
+          sudo mv mirava-macos-arm64 /usr/local/bin/mirava
+          ```
+          
+          ### Features in this release:
+          - ✅ Multi-platform support (Linux, Windows, macOS)
+          - ✅ Multiple architectures (AMD64, ARM64)
+          - ✅ Automatic video course detection
+          - ✅ Progress tracking with percentage and time
+          - ✅ Course hierarchy support (works from subdirectories)
+          - ✅ Multiple video marking: `mirava mark 1 3 5`
+          - ✅ Relative path display from course root
+          - ✅ JSON-based progress persistence
+          
+          ### Usage:
+          ```bash
+          mirava                    # List videos and sync progress
+          mirava set 3 50%          # Set video 3 to 50% watched
+          mirava set 5 1:20:10      # Set video 5 to 1h 20m 10s watched
+          mirava mark 8             # Mark video 8 as complete
+          mirava mark 1 3 5         # Mark multiple videos as complete
+          mirava help               # Show help
+          ```
+          
+          ### Verification:
+          All binaries can be verified using the provided checksums.txt file.
+
+    - name: Upload Linux AMD64 .deb
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./linux-amd64-artifacts/mirava_${{ steps.version.outputs.version }}_amd64.deb
+        asset_name: mirava_${{ steps.version.outputs.version }}_amd64.deb
+        asset_content_type: application/vnd.debian.binary-package
+
+    - name: Upload Linux ARM64 .deb
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./linux-arm64-artifacts/mirava_${{ steps.version.outputs.version }}_arm64.deb
+        asset_name: mirava_${{ steps.version.outputs.version }}_arm64.deb
+        asset_content_type: application/vnd.debian.binary-package
+
+    - name: Upload Linux AMD64 binary
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./linux-amd64-artifacts/mirava-linux-amd64
+        asset_name: mirava-linux-amd64
+        asset_content_type: application/octet-stream
+
+    - name: Upload Linux ARM64 binary
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./linux-arm64-artifacts/mirava-linux-arm64
+        asset_name: mirava-linux-arm64
+        asset_content_type: application/octet-stream
+
+    - name: Upload Windows binary
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./windows-amd64-artifacts/mirava-windows-amd64.exe
+        asset_name: mirava-windows-amd64.exe
+        asset_content_type: application/octet-stream
+
+    - name: Upload macOS x86_64 binary
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./macos-x86_64-artifacts/mirava-macos-x86_64
+        asset_name: mirava-macos-x86_64
+        asset_content_type: application/octet-stream
+
+    - name: Upload macOS ARM64 binary
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./macos-arm64-artifacts/mirava-macos-arm64
+        asset_name: mirava-macos-arm64
+        asset_content_type: application/octet-stream
+
+    - name: Upload checksums
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./checksums.txt
+        asset_name: checksums.txt
+        asset_content_type: text/plain
