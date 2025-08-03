@@ -30,13 +30,24 @@ int main(int argc, char *argv[])
     }
     else if (strcmp(argv[1], "mark") == 0)
     {
-        if (argc != 3)
+        if (argc < 3)
         {
-            fprintf(stderr, "Error: 'mark' command requires a video number.\n");
+            fprintf(stderr, "Error: 'mark' command requires at least one video number.\n");
             show_help();
             return 1;
         }
-        action_update_progress(atoi(argv[2]), "100%");
+        
+        // Mark multiple videos
+        for (int i = 2; i < argc; i++)
+        {
+            int video_num = atoi(argv[i]);
+            if (video_num <= 0)
+            {
+                fprintf(stderr, "Error: Invalid video number '%s'. Must be a positive integer.\n", argv[i]);
+                return 1;
+            }
+            action_update_progress(video_num, "100%");
+        }
     }
     else
     {

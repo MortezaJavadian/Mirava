@@ -125,7 +125,14 @@ static long long parse_progress_string(const char *progress_str, long long total
     {
         int percentage = atoi(progress_str);
         if (percentage >= 0 && percentage <= 100)
+        {
+            // If duration is unknown (-1), treat 100% as a large number
+            if (total_duration <= 0)
+            {
+                return (percentage == 100) ? 999999 : (percentage * 10); // Arbitrary values for unknown duration
+            }
             return (total_duration * percentage) / 100;
+        }
     }
     else if (strchr(progress_str, ':'))
     {
@@ -163,7 +170,7 @@ void action_update_progress(int video_number, const char *progress_str)
         return;
     }
 
-    vid->watched_sec = new_watched_sec > vid->duration_sec ? vid->duration_sec : new_watched_sec;
+    vid->watched_sec = (vid->duration_sec > 0 && new_watched_sec > vid->duration_sec) ? vid->duration_sec : new_watched_sec;
     save_data_to_json();
     printf("Updated video %d ('%s') to %lld seconds.\n", video_number, vid->path, vid->watched_sec);
 }

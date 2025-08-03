@@ -32,6 +32,18 @@ void display_video_list()
                 snprintf(status_str, sizeof(status_str), "[%d%%]", percentage);
             }
         }
+        else
+        {
+            // For videos with unknown duration, check if they are marked as watched
+            if (vid->watched_sec >= 999999) // Our arbitrary "complete" value
+            {
+                snprintf(status_str, sizeof(status_str), "[✓]");
+            }
+            else if (vid->watched_sec > 0)
+            {
+                snprintf(status_str, sizeof(status_str), "[watched]");
+            }
+        }
 
         int h = vid->duration_sec / 3600;
         int m = (vid->duration_sec % 3600) / 60;
@@ -88,10 +100,11 @@ void show_help()
     printf("Usage:\n");
     printf("  mirava                     - List videos and sync progress.\n");
     printf("  mirava set <num> <val>     - Set progress for video <num>.\n");
-    printf("  mirava mark <num>          - Mark video <num> as complete.\n");
+    printf("  mirava mark <num> [num...] - Mark video(s) as complete.\n");
     printf("  mirava help                - Show this help message.\n\n");
     printf("Examples:\n");
     printf("  mirava set 3 50%%            - Set video 3 to 50%% watched.\n");
     printf("  mirava set 5 1:20:10         - Set video 5 to 1h 20m 10s watched.\n");
     printf("  mirava mark 8              - Mark video 8 as 100%% watched.\n");
+    printf("  mirava mark 3 5 7          - Mark videos 3, 5, and 7 as 100%% watched.\n");
 }
