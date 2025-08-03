@@ -13,27 +13,39 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            cc: gcc
+          - arch: arm64
+            runner: ubuntu-latest
+            cc: aarch64-linux-gnu-gcc
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Set up cross-compilation for ARM64
-      if: matrix.arch == 'arm64'
+    - name: Set up dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y gcc-aarch64-linux-gnu
-
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        if [ "${{ matrix.arch }}" = "amd64" ]; then
-          sudo apt-get install -y libavformat-dev libavutil-dev libjansson-dev build-essential
-        else
-          sudo apt-get install -y libavformat-dev:arm64 libavutil-dev:arm64 libjansson-dev:arm64 build-essential
+        sudo apt-get install -y build-essential pkg-config
+        
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          # Set up ARM64 cross-compilation
+          sudo apt-get install -y gcc-aarch64-linux-gnu
           sudo dpkg --add-architecture arm64
+          
+          # Update sources for cross-compilation
+          sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -cs) main universe" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -cs)-updates main universe" | sudo tee -a /etc/apt/sources.list
           sudo apt-get update
+          
+          # Install ARM64 libraries
+          sudo apt-get install -y libavformat-dev:arm64 libavutil-dev:arm64 libjansson-dev:arm64
+        else
+          # Install AMD64 libraries
+          sudo apt-get install -y libavformat-dev libavutil-dev libjansson-dev
         fi
 
     - name: Get version info
@@ -46,11 +58,12 @@ jobs:
 
     - name: Build Mirava
       run: |
-        if [ "${{ matrix.arch }}" = "amd64" ]; then
-          make clean && make
-        else
-          CC=aarch64-linux-gnu-gcc make clean && make
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
+          export CC="${{ matrix.cc }}"
         fi
+        
+        make clean && make
         cp mirava ${{ steps.version.outputs.binary_name }}
 
     - name: Test build (amd64 only)
@@ -168,7 +181,13 @@ jobs:
       uses: msys2/setup-msys2@v2
       with:
         msystem: MINGW64
-        install: mingw-w64-x86_64-gcc mingw-w64-x86_64-make mingw-w64-x86_64-ffmpeg mingw-w64-x86_64-jansson
+        update: true
+        install: >-
+          mingw-w64-x86_64-gcc
+          mingw-w64-x86_64-make
+          mingw-w64-x86_64-ffmpeg
+          mingw-w64-x86_64-jansson
+          make
 
     - name: Get version info
       shell: msys2 {0}
@@ -182,8 +201,15 @@ jobs:
       shell: msys2 {0}
       run: |
         make clean
-        make LDFLAGS="-lavformat -lavutil -ljansson -lm -static"
-        cp mirava.exe ${{ steps.version.outputs.binary_name }}
+        make
+        if [ -f mirava.exe ]; then
+          cp mirava.exe ${{ steps.version.outputs.binary_name }}
+        elif [ -f mirava ]; then
+          cp mirava ${{ steps.version.outputs.binary_name }}
+        else
+          echo "Build failed - no executable found"
+          exit 1
+        fi
 
     - name: Test build
       shell: msys2 {0}
@@ -208,7 +234,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        brew install ffmpeg jansson
+        brew install ffmpeg jansson pkg-config
 
     - name: Get version info
       id: version
@@ -219,10 +245,14 @@ jobs:
 
     - name: Build Mirava for macOS
       run: |
+        export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig"
+        export CFLAGS="$CFLAGS -I$(brew --prefix)/include"
+        export LDFLAGS="$LDFLAGS -L$(brew --prefix)/lib"
+        
         if [ "${{ matrix.arch }}" = "x86_64" ]; then
           make clean && make
         else
-          make clean && make CC="clang -arch arm64"
+          make clean && make CC="clang -arch arm64" CFLAGS="$CFLAGS -arch arm64" LDFLAGS="$LDFLAGS -arch arm64"
         fi
         cp mirava ${{ steps.version.outputs.binary_name }}
 
