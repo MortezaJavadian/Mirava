@@ -218,7 +218,7 @@ jobs:
     - name: Build Mirava for macOS
       run: |
         if [ "${{ matrix.arch }}" = "x86_64" ]; then
-          make clean && make CFLAGS="-I$(brew --prefix)/include" LDFLAGS="-L$(brew --prefix)/lib"
+          make clean && make CFLAGS="-I$(brew --prefix)/include" LDFLAGS="-L$(brew --prefix)/lib -lavformat -lavutil -ljansson"
         else
           make clean && make CC="clang -arch arm64" CFLAGS="-I$(brew --prefix)/include -arch arm64" LDFLAGS="-L$(brew --prefix)/lib -arch arm64 -lavformat -lavutil -ljansson"
         fi
