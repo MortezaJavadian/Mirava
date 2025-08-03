@@ -217,14 +217,10 @@ jobs:
 
     - name: Build Mirava for macOS
       run: |
-        export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig"
-        export CFLAGS="$CFLAGS -I$(brew --prefix)/include"
-        export LDFLAGS="$LDFLAGS -L$(brew --prefix)/lib"
-        
         if [ "${{ matrix.arch }}" = "x86_64" ]; then
-          make clean && make
+          make clean && make CFLAGS="-I$(brew --prefix)/include" LDFLAGS="-L$(brew --prefix)/lib"
         else
-          make clean && make CC="clang -arch arm64" CFLAGS="$CFLAGS -arch arm64" LDFLAGS="$LDFLAGS -arch arm64 -lavformat -lavutil -ljansson"
+          make clean && make CC="clang -arch arm64" CFLAGS="-I$(brew --prefix)/include -arch arm64" LDFLAGS="-L$(brew --prefix)/lib -arch arm64 -lavformat -lavutil -ljansson"
         fi
         cp mirava ${{ steps.version.outputs.binary_name }}
 
