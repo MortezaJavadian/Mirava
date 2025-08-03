@@ -1,4 +1,4 @@
-VERSION=1.2.1
+VERSION=1.2.2
 RELEASE_DATE=2025-08-04
-DESCRIPTION=Video Course Progress Tracker with working CI/CD
+DESCRIPTION=Video Course Progress Tracker - Fixed workflow
 MAINTAINER=Morteza Javadian
