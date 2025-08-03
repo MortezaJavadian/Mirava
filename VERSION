@@ -1,4 +1,4 @@
-VERSION=1.2.2
+VERSION=1.2.3
 RELEASE_DATE=2025-08-04
-DESCRIPTION=Video Course Progress Tracker - Fixed workflow
+DESCRIPTION=Video Course Progress Tracker - Fixed macOS ARM64 build
 MAINTAINER=Morteza Javadian

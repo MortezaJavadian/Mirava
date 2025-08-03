@@ -224,7 +224,7 @@ jobs:
         if [ "${{ matrix.arch }}" = "x86_64" ]; then
           make clean && make
         else
-          make clean && make CC="clang -arch arm64" CFLAGS="$CFLAGS -arch arm64" LDFLAGS="$LDFLAGS -arch arm64"
+          make clean && make CC="clang -arch arm64" CFLAGS="$CFLAGS -arch arm64" LDFLAGS="$LDFLAGS -arch arm64 -lavformat -lavutil -ljansson"
         fi
         cp mirava ${{ steps.version.outputs.binary_name }}
 
