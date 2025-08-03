@@ -7,6 +7,7 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:  # Allow manual triggering
 
 jobs:
   build-linux:
@@ -262,23 +263,30 @@ jobs:
 
     - name: Create Release
       id: create_release
-      uses: actions/create-release@v1
+      uses: softprops/action-gh-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: ${{ github.ref }}
-        release_name: Mirava ${{ github.ref }}
+        tag_name: ${{ github.ref_name }}
+        name: Mirava ${{ github.ref_name }}
         draft: false
         prerelease: false
+        files: |
+          ./linux-amd64-artifacts/mirava_${{ steps.version.outputs.version }}_amd64.deb
+          ./linux-amd64-artifacts/mirava-linux-amd64
+          ./windows-amd64-artifacts/mirava-windows-amd64.exe
+          ./macos-x86_64-artifacts/mirava-macos-x86_64
+          ./macos-arm64-artifacts/mirava-macos-arm64
+          ./checksums.txt
         body: |
-          ## Mirava Release ${{ github.ref }}
+          ## Mirava Release ${{ github.ref_name }}
           
           ### Installation Instructions
           
           #### Ubuntu/Debian (.deb packages):
           ```bash
           # For AMD64:
-          wget https://github.com/MortezaJavadian/Mirava/releases/download/${{ github.ref }}/mirava_${{ steps.version.outputs.version }}_amd64.deb
+          wget https://github.com/MortezaJavadian/Mirava/releases/download/${{ github.ref_name }}/mirava_${{ steps.version.outputs.version }}_amd64.deb
           sudo dpkg -i mirava_${{ steps.version.outputs.version }}_amd64.deb
           sudo apt-get install -f
           ```
@@ -286,7 +294,7 @@ jobs:
           #### Other Linux distributions:
           ```bash
           # Download binary for your architecture
-          wget https://github.com/MortezaJavadian/Mirava/releases/download/${{ github.ref }}/mirava-linux-amd64
+          wget https://github.com/MortezaJavadian/Mirava/releases/download/${{ github.ref_name }}/mirava-linux-amd64
           chmod +x mirava-linux-amd64
           sudo mv mirava-linux-amd64 /usr/local/bin/mirava
           ```
@@ -294,25 +302,25 @@ jobs:
           #### Windows:
           ```cmd
           # Download and run
-          curl -L https://github.com/MortezaJavadian/Mirava/releases/download/${{ github.ref }}/mirava-windows-amd64.exe -o mirava.exe
+          curl -L https://github.com/MortezaJavadian/Mirava/releases/download/${{ github.ref_name }}/mirava-windows-amd64.exe -o mirava.exe
           ```
           
           #### macOS:
           ```bash
           # For Intel Macs:
-          wget https://github.com/MortezaJavadian/Mirava/releases/download/${{ github.ref }}/mirava-macos-x86_64
+          wget https://github.com/MortezaJavadian/Mirava/releases/download/${{ github.ref_name }}/mirava-macos-x86_64
           chmod +x mirava-macos-x86_64
           sudo mv mirava-macos-x86_64 /usr/local/bin/mirava
           
           # For Apple Silicon Macs:
-          wget https://github.com/MortezaJavadian/Mirava/releases/download/${{ github.ref }}/mirava-macos-arm64
+          wget https://github.com/MortezaJavadian/Mirava/releases/download/${{ github.ref_name }}/mirava-macos-arm64
           chmod +x mirava-macos-arm64
           sudo mv mirava-macos-arm64 /usr/local/bin/mirava
           ```
           
           ### Features in this release:
           - ✅ Multi-platform support (Linux, Windows, macOS)
-          - ✅ Multiple architectures (AMD64, ARM64)
+          - ✅ Multiple architectures (AMD64)
           - ✅ Automatic video course detection
           - ✅ Progress tracking with percentage and time
           - ✅ Course hierarchy support (works from subdirectories)
