@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        arch: [amd64]  # Temporarily disable arm64 until we fix the repositories
+        arch: [amd64, arm64]
     
     steps:
     - name: Checkout repository
@@ -41,8 +41,8 @@ jobs:
         make clean && make
         cp mirava ${{ steps.version.outputs.binary_name }}
 
-    - name: Test build (amd64 only)
-      if: matrix.arch == 'amd64'
+    - name: Test build (amd64 or arm64)
+      if: matrix.arch == 'amd64' || matrix.arch == 'arm64'
       run: |
         ./mirava help
 
@@ -351,6 +351,26 @@ jobs:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
         asset_path: ./linux-amd64-artifacts/mirava-linux-amd64
         asset_name: mirava-linux-amd64
+        asset_content_type: application/octet-stream
+
+    - name: Upload Linux ARM64 .deb
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./linux-arm64-artifacts/mirava_${{ steps.version.outputs.version }}_arm64.deb
+        asset_name: mirava_${{ steps.version.outputs.version }}_arm64.deb
+        asset_content_type: application/vnd.debian.binary-package
+
+    - name: Upload Linux ARM64 binary
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./linux-arm64-artifacts/mirava-linux-arm64
+        asset_name: mirava-linux-arm64
         asset_content_type: application/octet-stream
 
     - name: Upload Windows binary

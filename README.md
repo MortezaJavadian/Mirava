@@ -9,25 +9,27 @@ Mirava is a command-line tool that helps you watch video courses. It scans your 
 #### Ubuntu/Debian (.deb packages)
 ```bash
 # For AMD64 systems:
-wget https://github.com/MortezaJavadian/Mirava/releases/latest/download/mirava_1.0.0_amd64.deb
-sudo dpkg -i mirava_1.0.0_amd64.deb
+VERSION=1.2.6
+wget https://github.com/MortezaJavadian/Mirava/releases/download/v$VERSION/mirava_${VERSION}_amd64.deb
+sudo dpkg -i mirava_${VERSION}_amd64.deb
 sudo apt-get install -f
 
 # For ARM64 systems:
-wget https://github.com/MortezaJavadian/Mirava/releases/latest/download/mirava_1.0.0_arm64.deb
-sudo dpkg -i mirava_1.0.0_arm64.deb
+wget https://github.com/MortezaJavadian/Mirava/releases/download/v$VERSION/mirava_${VERSION}_arm64.deb
+sudo dpkg -i mirava_${VERSION}_arm64.deb
 sudo apt-get install -f
 ```
 
 #### Other Linux Distributions
 ```bash
 # Download pre-built binary for your architecture:
-wget https://github.com/MortezaJavadian/Mirava/releases/latest/download/mirava-linux-amd64
+VERSION=1.2.6
+wget https://github.com/MortezaJavadian/Mirava/releases/download/v$VERSION/mirava-linux-amd64
 chmod +x mirava-linux-amd64
 sudo mv mirava-linux-amd64 /usr/local/bin/mirava
 
 # For ARM64:
-wget https://github.com/MortezaJavadian/Mirava/releases/latest/download/mirava-linux-arm64
+wget https://github.com/MortezaJavadian/Mirava/releases/download/v$VERSION/mirava-linux-arm64
 chmod +x mirava-linux-arm64
 sudo mv mirava-linux-arm64 /usr/local/bin/mirava
 ```

@@ -1,4 +1,4 @@
-VERSION=1.2.5
+VERSION=1.2.6
 RELEASE_DATE=2025-08-04
-DESCRIPTION=Video Course Progress Tracker - Fix macOS linker flags for both archs
+DESCRIPTION=Video Course Progress Tracker - Add Linux ARM64 build, fix pipeline, update install docs
 MAINTAINER=Morteza Javadian
